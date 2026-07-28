@@ -188,7 +188,10 @@ class EnrichmentService:
         )
 
     def run_once(self) -> bool:
-        job = self.database.claim_next_enrichment_job()
+        try:
+            job = self.database.claim_next_enrichment_job()
+        except Exception:
+            return False
         if not job:
             return False
         try:

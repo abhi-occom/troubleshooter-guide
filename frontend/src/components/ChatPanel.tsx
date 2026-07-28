@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../types";
-import { Citations } from "./Citations";
 
 interface Props {
   messages: ChatMessage[];
@@ -103,7 +102,7 @@ export function ChatPanel({
             )}
           </div>
         ) : (
-          messages.map((message) => (
+          messages.map((message, index) => (
             <article className={`message ${message.role}`} key={message.id}>
               <div className="avatar">
                 {message.role === "assistant" ? <Bot size={18} /> : "You"}
@@ -126,7 +125,23 @@ export function ChatPanel({
                     Searched for: {message.rewritten_query}
                   </small>
                 )}
-                <Citations citations={message.citations} />
+                {message.role === "assistant" &&
+                  index === messages.length - 1 &&
+                  !asking &&
+                  !!message.suggested_questions?.length && (
+                    <div className="suggested-questions">
+                      {message.suggested_questions.map((suggestion) => (
+                        <button
+                          key={suggestion}
+                          type="button"
+                          className="suggested-question"
+                          onClick={() => onAsk(suggestion)}
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  )}
               </div>
             </article>
           ))

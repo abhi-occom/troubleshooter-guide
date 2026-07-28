@@ -11,12 +11,16 @@ The project includes:
 - Local text embeddings with ChromaDB's `all-MiniLM-L6-v2`
 - Persistent vector storage in ChromaDB
 - Operational, conversation, profile, FAQ, and job data in SQLite
-- Ollama or Claude for query rewriting and grounded answer generation
-- Automatic router-profile extraction and FAQ evaluation
+- OpenRouter (default), Ollama or Claude for query rewriting and grounded
+  answer generation
+- Automatic router-profile extraction and FAQ evaluation (Ollama or
+  OpenRouter)
 - Exact router model/product identifier filtering with safe global fallback
 - Server-side document search, filtering, sorting and pagination
 - Curated retrieval and answer evaluation datasets with CSV import/export
 - Short-term, session-scoped conversation memory
+- LLM-suggested follow-up questions after each grounded answer, persisted per
+  message
 
 The application is currently designed as a local Windows pilot. It has no
 authentication and must not be exposed directly to the public internet.
@@ -55,7 +59,7 @@ flowchart LR
     API --> Router["Question intent routing"]
     Router --> SQLite
     Router --> Chroma
-    Router --> LLM["Ollama or Claude"]
+    Router --> LLM["OpenRouter, Ollama or Claude"]
 
     Worker["Persistent enrichment worker"] --> SQLite
     Worker --> Chroma
@@ -73,8 +77,8 @@ The main responsibilities are separated as follows:
 | `all-MiniLM-L6-v2` | Converting chunks and questions into 384-dimensional vectors |
 | ChromaDB | Persistent semantic search and FAQ retrieval aliases |
 | SQLite | Documents, sessions, messages, citations, profiles, FAQs and jobs |
-| Ollama/Claude | Follow-up rewriting and answers grounded in retrieved excerpts |
-| Enrichment worker | Automatic profile extraction, FAQ generation and evaluation |
+| OpenRouter/Ollama/Claude | Follow-up rewriting, answer generation, and suggested follow-up questions |
+| Enrichment worker | Automatic profile extraction, FAQ generation and evaluation (Ollama or OpenRouter) |
 
 ## How PDF indexing works
 
@@ -295,7 +299,7 @@ flowchart TD
     Indexed["Document indexed"] --> Queue["Create queued job in SQLite"]
     Queue --> Worker["Background worker claims job"]
     Worker --> Batches["Load source chunks and create bounded batches"]
-    Batches --> Extract["Ollama structured JSON extraction"]
+    Batches --> Extract["Structured JSON extraction (Ollama or OpenRouter)"]
     Extract --> Merge["Merge profile fields, features, topics and FAQs"]
     Merge --> Profile["Save router profile and provenance in SQLite"]
     Profile --> FAQs["Save generated FAQ questions"]
@@ -326,14 +330,28 @@ Configuration:
 
 ```dotenv
 ENRICHMENT_ENABLED=true
-ENRICHMENT_BATCH_CHARACTERS=12000
+ENRICHMENT_BATCH_CHARACTERS=6000
 ENRICHMENT_POLL_SECONDS=2
 ```
 
 ### Structured profile extraction
 
-The worker sends bounded groups of PDF chunks to the configured Ollama model
-using JSON-schema output and `think: false`.
+The worker sends bounded groups of PDF chunks to the configured provider and
+requests JSON-only output:
+
+- **Ollama**: uses native JSON-schema constrained output (`format`) with
+  `think: false`.
+- **OpenRouter**: uses `response_format: {"type": "json_object"}` plus an
+  explicit field list in the prompt, with lenient parsing/repair if the model
+  wraps the JSON in markdown fences or extra text.
+- **Claude**: not currently supported for enrichment; only used for chat
+  query rewriting and answer generation.
+
+Smaller/free-tier models (for example OpenRouter's `:free` models) can
+truncate long JSON responses. If a response is cut off mid-object, the
+enrichment job fails with an explicit "response was truncated" error instead
+of silently producing partial data. Lowering `ENRICHMENT_BATCH_CHARACTERS` or
+switching to a stronger model resolves this.
 
 It requests:
 
@@ -409,11 +427,12 @@ flowchart TD
     Threshold -- "No" --> NotFound["Return fixed not-found response"]
     Threshold -- "Yes" --> Prompt["Send question, recent context and source chunks to LLM"]
     Prompt --> Grounded["Generate concise grounded answer"]
-    Grounded --> Save["Save messages, citations and latency in SQLite"]
+    Grounded --> Suggest["Ask the LLM for up to 3 follow-up questions"]
+    Suggest --> Save["Save messages, citations and suggestions in SQLite"]
     ProfileList --> Save
     ProfileAnswer --> Save
     NotFound --> Save
-    Save --> Response["Return answer and citations to React"]
+    Save --> Response["Return answer, citations and suggested questions to React"]
 ```
 
 ### 1. Deterministic structured questions
@@ -517,7 +536,18 @@ excerpts do not support an answer, it must respond:
 I could not find this in the uploaded router guide.
 ```
 
-### 5. Citations and logging
+### 5. Suggested follow-up questions
+
+After a grounded answer, the same provider is asked to propose up to three
+short, practical follow-up questions based only on the retrieved excerpts and
+the answer just given. Suggestions are skipped for not-found answers and for
+deterministic inventory/profile answers.
+
+Suggested questions are persisted with the assistant message (not just
+returned for the live response), so they reappear when a chat session is
+reloaded. Clicking a suggestion in the UI asks it immediately.
+
+### 6. Citations and logging
 
 The response includes:
 
@@ -528,9 +558,15 @@ The response includes:
 - Source page
 - Supporting excerpt
 - Retrieval distance
+- Suggested follow-up questions
 - Request ID
 
-Messages, citations, total latency and errors are persisted in SQLite.
+Citations are still computed, returned by the API, and stored in SQLite for
+grounding and audit purposes, but the chat UI no longer renders them inline
+under each answer — only the Evaluation workspace displays citation detail.
+
+Messages, citations, suggested questions, total latency and errors are
+persisted in SQLite.
 
 ## Conversation memory
 
@@ -570,8 +606,11 @@ retrieve fresh PDF evidence.
 | ChromaDB | Persistent vector search |
 | ONNX Runtime | Local MiniLM embedding inference |
 | SQLite | Structured persistence |
-| HTTPX | Ollama HTTP API client |
+| HTTPX | Ollama and OpenRouter HTTP API client |
 | Anthropic SDK | Optional Claude provider |
+
+Supported LLM providers (`LLM_PROVIDER`): `openrouter` (default), `ollama`,
+`claude`.
 
 ### Frontend
 
@@ -603,7 +642,7 @@ backend/data/
 |---|---|
 | `documents` | Upload metadata, hashes, versions and processing statuses |
 | `chat_sessions` | Session creation, activity and expiry |
-| `messages` | User and assistant messages |
+| `messages` | User and assistant messages, plus persisted suggested follow-up questions |
 | `citations` | Evidence attached to assistant messages |
 | `question_logs` | Question, latency, retrieval result and error audit |
 | `router_profiles` | Extracted and manually corrected structured facts |
@@ -630,7 +669,8 @@ invalidates prior FAQs and evaluations while preserving manual profile fields.
 - Windows PowerShell
 - Python 3.11 or newer
 - Node.js 20 or newer
-- Ollama, or an Anthropic API key
+- An OpenRouter API key (default provider), or Ollama, or an Anthropic API
+  key
 
 ### 1. Create the Python environment
 
@@ -660,11 +700,32 @@ Copy-Item .env.example .env
 
 Review `.env` before starting the backend.
 
-### 3. Configure Ollama
+### 3. Configure OpenRouter (default provider)
 
-Install Ollama from [ollama.com/download](https://ollama.com/download).
+Create an API key at [openrouter.ai/keys](https://openrouter.ai/keys), then
+set:
 
-The default model is:
+```dotenv
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your-key
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
+OPENROUTER_TIMEOUT_SECONDS=120
+```
+
+OpenRouter is used for query rewriting, grounded answer generation, suggested
+follow-up questions, and automatic knowledge enrichment.
+
+Questions and retrieved PDF excerpts are sent to OpenRouter's hosted model.
+Confirm company approval before sending internal manuals to a third-party
+API, and note that free-tier models (`:free` suffix) can be less reliable at
+producing well-formed structured JSON for enrichment than a paid model — see
+[How automatic enrichment works](#how-automatic-enrichment-works).
+
+### 4. Optional Ollama configuration
+
+Install Ollama from [ollama.com/download](https://ollama.com/download) if you
+prefer local inference instead of OpenRouter:
 
 ```dotenv
 LLM_PROVIDER=ollama
@@ -702,7 +763,7 @@ OLLAMA_BASE_URL=https://ollama.com
 OLLAMA_API_KEY=your-key
 ```
 
-### 4. Optional Claude configuration
+### 5. Optional Claude configuration
 
 Claude remains available for normal query rewriting and answer generation:
 
@@ -712,11 +773,14 @@ ANTHROPIC_API_KEY=your-key
 CLAUDE_MODEL=claude-3-5-haiku-latest
 ```
 
-Automatic knowledge enrichment currently requires the Ollama provider.
+Automatic knowledge enrichment does not support the Claude provider; use
+`openrouter` or `ollama` if you need enrichment.
 
-### 5. Start the backend
+### 6. Start the backend
 
-From the repository root:
+From the repository root (this matters — `DATA_DIR=backend/data` in `.env`
+is relative, so starting Uvicorn from inside `backend/` instead would create
+a stray `backend/backend/data` folder and a second, disconnected database):
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -740,13 +804,13 @@ Example healthy response:
   "database": true,
   "vector_store": true,
   "embedding_model": true,
-  "llm_provider": "ollama",
+  "llm_provider": "openrouter",
   "llm_configured": true,
   "llm_available": true
 }
 ```
 
-### 6. Start the frontend
+### 7. Start the frontend
 
 In a second PowerShell terminal:
 
@@ -769,7 +833,12 @@ Vite proxies `/api` requests to `http://localhost:8000`.
 The complete default configuration is:
 
 ```dotenv
-LLM_PROVIDER=ollama
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
+OPENROUTER_TIMEOUT_SECONDS=120
+
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=minimax-m2.5:cloud
 OLLAMA_API_KEY=
@@ -793,7 +862,7 @@ MAX_UPLOAD_MB=25
 MIN_EXTRACTED_CHARACTERS=80
 
 ENRICHMENT_ENABLED=true
-ENRICHMENT_BATCH_CHARACTERS=12000
+ENRICHMENT_BATCH_CHARACTERS=6000
 ENRICHMENT_POLL_SECONDS=2
 
 FRONTEND_ORIGINS=http://localhost:5173
@@ -801,11 +870,15 @@ FRONTEND_ORIGINS=http://localhost:5173
 
 | Setting | Meaning |
 |---|---|
-| `LLM_PROVIDER` | `ollama` or `claude` |
+| `LLM_PROVIDER` | `openrouter` (default), `ollama`, or `claude` |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `OPENROUTER_BASE_URL` | OpenRouter API base URL |
+| `OPENROUTER_MODEL` | Exact OpenRouter model slug (used for chat and enrichment) |
+| `OPENROUTER_TIMEOUT_SECONDS` | Request timeout for generation |
 | `OLLAMA_BASE_URL` | Ollama server URL |
 | `OLLAMA_MODEL` | Exact Ollama model name |
 | `OLLAMA_TIMEOUT_SECONDS` | Request timeout for generation |
-| `DATA_DIR` | SQLite, upload and Chroma parent directory |
+| `DATA_DIR` | SQLite, upload and Chroma parent directory (relative to the process's working directory — always start the backend from the repository root) |
 | `CHROMA_COLLECTION` | Vector collection name |
 | `CHUNK_SIZE` | Approximate characters per source chunk |
 | `CHUNK_OVERLAP` | Repeated characters between adjacent chunks |
@@ -847,7 +920,7 @@ Possible enrichment statuses:
 |---|---|
 | `not_started` | No job exists |
 | `queued` | Waiting for the worker |
-| `running` | Ollama extraction/evaluation is running |
+| `running` | Extraction/evaluation is running (Ollama or OpenRouter) |
 | `ready` | Profile and FAQ evaluation completed |
 | `failed` | Retry limit was exhausted |
 
@@ -905,7 +978,11 @@ The chat supports:
 - Router inventory questions
 - Feature lookups
 - Router comparisons
-- Source citations and excerpts
+- Clickable suggested follow-up questions after each grounded answer
+
+Citations are still generated and stored for every grounded answer (visible
+via the API and the Evaluation workspace) but are not rendered inline in the
+chat UI.
 
 Starting a new chat deletes the prior session from SQLite and creates a new
 session ID.
@@ -999,6 +1076,10 @@ Example response:
       "excerpt": "If the status LED remains red...",
       "distance": 0.21
     }
+  ],
+  "suggested_questions": [
+    "What does a blinking red LED mean?",
+    "How do I factory reset the router?"
   ]
 }
 ```
@@ -1100,6 +1181,20 @@ http://localhost:8000/api/health
 `llm_available` is true only when Ollama is reachable and the exact configured
 model appears in its model list.
 
+### OpenRouter errors (`ProviderUnavailable`, malformed JSON, truncated response)
+
+- Confirm `OPENROUTER_API_KEY` is set and `OPENROUTER_MODEL` is an exact,
+  valid model slug from [openrouter.ai/models](https://openrouter.ai/models).
+- `Cannot connect to OpenRouter` — check network/firewall access to
+  `https://openrouter.ai`.
+- `OpenRouter returned malformed enrichment JSON` or a "response was
+  truncated" error during enrichment — the model (especially a `:free`
+  model) failed to return a complete JSON object within the token budget.
+  Try a stronger/paid OpenRouter model for enrichment, or lower
+  `ENRICHMENT_BATCH_CHARACTERS` further.
+- Chat answers work but enrichment never completes — enrichment is not
+  supported for `LLM_PROVIDER=claude`; switch to `openrouter` or `ollama`.
+
 ### First upload is slow
 
 ChromaDB may need to download `all-MiniLM-L6-v2` on the first indexing request.
@@ -1123,21 +1218,28 @@ Possible causes:
 Review the PDF text layer, regenerate enrichment, and evaluate retrieval before
 loosening `MAX_DISTANCE`.
 
-### Enrichment remains queued
+### Enrichment remains queued or shows failed
 
-Confirm:
+A job normally moves `queued -> running` within `ENRICHMENT_POLL_SECONDS`
+(2 seconds by default) once the worker is idle. If it cycles back to
+`queued` and then `failed` after 3 attempts, confirm:
 
 - `ENRICHMENT_ENABLED=true`
-- The FastAPI backend is still running
-- Ollama is reachable
-- No previous job is running for the same document
+- The FastAPI backend is still running (started from the repository root)
+- The configured provider (Ollama or OpenRouter) is reachable and
+  correctly configured — see the provider-specific sections above
+- No previous job is already running for the same document
 
-Open the document's knowledge panel to inspect attempts and the latest error.
+Open the document's knowledge panel, or query the `enrichment_jobs` table
+directly, to read the exact `error` message from the last attempt — it
+usually names the failing provider and reason.
 
 ## Current limitations and production guidance
 
 Current limitations:
 
+- Default `openrouter` provider sends questions and retrieved PDF excerpts to
+  a third-party hosted API; use `ollama` for fully local/offline inference
 - English, text-based PDFs only
 - No OCR
 - No authentication or document-level permissions
@@ -1173,4 +1275,4 @@ Recommended evaluation metrics:
 - Median and p95 response time
 
 Changing the embedding model requires a full document re-index. Changing the
-Ollama or Claude answer model does not.
+OpenRouter, Ollama or Claude answer model does not.

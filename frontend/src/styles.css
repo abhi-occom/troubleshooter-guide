@@ -786,6 +786,27 @@ h2 {
   font-weight: 600;
 }
 
+.suggested-questions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.suggested-question {
+  padding: 7px 12px;
+  color: var(--green);
+  border: 1px solid #b7d0c2;
+  border-radius: 999px;
+  background: var(--green-soft);
+  font-size: 12px;
+}
+
+.suggested-question:hover {
+  border-color: var(--green);
+  background: #e7eee9;
+}
+
 .rewritten {
   display: block;
   margin-top: 9px;

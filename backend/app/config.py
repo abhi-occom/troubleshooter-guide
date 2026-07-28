@@ -16,10 +16,15 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model: str = "claude-3-5-haiku-latest"
     llm_provider: str = "ollama"
+    enrichment_provider: str = ""
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "minimax-m2.5:cloud"
     ollama_api_key: str = ""
     ollama_timeout_seconds: float = 120.0
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "nvidia/nemotron-3-nano-30b-a3b:free"
+    openrouter_timeout_seconds: float = 120.0
     data_dir: Path = Path("backend/data")
     chroma_collection: str = "router_manuals"
     chunk_size: int = 900
@@ -39,8 +44,8 @@ class Settings(BaseSettings):
     @classmethod
     def validate_llm_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in {"ollama", "claude"}:
-            raise ValueError("LLM_PROVIDER must be either 'ollama' or 'claude'.")
+        if normalized not in {"ollama", "claude", "openrouter"}:
+            raise ValueError("LLM_PROVIDER must be one of 'ollama', 'claude', or 'openrouter'.")
         return normalized
 
     @field_validator("frontend_origins", mode="before")

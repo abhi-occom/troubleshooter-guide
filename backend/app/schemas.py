@@ -119,6 +119,7 @@ class MessageResponse(BaseModel):
     rewritten_query: str | None = None
     grounded: bool | None = None
     citations: list[Citation] = []
+    suggested_questions: list[str] = []
     created_at: str
 
 
@@ -136,6 +137,7 @@ class AskResponse(BaseModel):
     rewritten_query: str | None = None
     citations: list[Citation]
     retrieval_diagnostics: dict | None = None
+    suggested_questions: list[str] = []
 
 
 class DocumentPageResponse(BaseModel):
@@ -151,7 +153,7 @@ class HealthResponse(BaseModel):
     database: bool
     vector_store: bool
     embedding_model: bool
-    llm_provider: Literal["claude", "ollama"]
+    llm_provider: Literal["claude", "ollama", "openrouter"]
     llm_configured: bool
     llm_available: bool
 

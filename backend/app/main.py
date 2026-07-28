@@ -46,6 +46,10 @@ def build_services() -> tuple[RagServices, EnrichmentWorker | None, EvaluationWo
         ollama_model=settings.ollama_model,
         ollama_api_key=settings.ollama_api_key,
         ollama_timeout_seconds=settings.ollama_timeout_seconds,
+        openrouter_base_url=settings.openrouter_base_url,
+        openrouter_model=settings.openrouter_model,
+        openrouter_api_key=settings.openrouter_api_key,
+        openrouter_timeout_seconds=settings.openrouter_timeout_seconds,
     )
     services = RagServices(settings, database, vector_store, provider)
     for document in database.list_documents():
@@ -58,10 +62,28 @@ def build_services() -> tuple[RagServices, EnrichmentWorker | None, EvaluationWo
             )
     worker = None
     if settings.enrichment_enabled:
+        enrichment_provider_name = settings.enrichment_provider or settings.llm_provider
+        enrichment_provider = (
+            provider
+            if enrichment_provider_name == settings.llm_provider
+            else create_provider(
+                enrichment_provider_name,
+                anthropic_api_key=settings.anthropic_api_key,
+                claude_model=settings.claude_model,
+                ollama_base_url=settings.ollama_base_url,
+                ollama_model=settings.ollama_model,
+                ollama_api_key=settings.ollama_api_key,
+                ollama_timeout_seconds=settings.ollama_timeout_seconds,
+                openrouter_base_url=settings.openrouter_base_url,
+                openrouter_model=settings.openrouter_model,
+                openrouter_api_key=settings.openrouter_api_key,
+                openrouter_timeout_seconds=settings.openrouter_timeout_seconds,
+            )
+        )
         enrichment = EnrichmentService(
             database,
             vector_store,
-            provider,
+            enrichment_provider,
             batch_characters=settings.enrichment_batch_characters,
             top_k=settings.retrieval_top_k,
             max_distance=settings.max_distance,

@@ -146,6 +146,7 @@ export default function App() {
           rewritten_query: result.rewritten_query,
           grounded: result.grounded,
           citations: result.citations,
+          suggested_questions: result.suggested_questions,
           created_at: new Date().toISOString(),
         },
       ]);

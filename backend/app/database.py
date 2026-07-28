@@ -265,6 +265,15 @@ class Database:
                     "ALTER TABLE router_profiles ADD COLUMN "
                     "identifier_aliases_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            message_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(messages)").fetchall()
+            }
+            if "suggested_questions_json" not in message_columns:
+                connection.execute(
+                    "ALTER TABLE messages ADD COLUMN "
+                    "suggested_questions_json TEXT NOT NULL DEFAULT '[]'"
+                )
             connection.execute(
                 """
                 UPDATE enrichment_jobs
@@ -1318,6 +1327,7 @@ class Database:
         rewritten_query: str | None = None,
         grounded: bool | None = None,
         citations: list[dict[str, Any]] | None = None,
+        suggested_questions: list[str] | None = None,
     ) -> dict[str, Any]:
         message_id = str(uuid4())
         now = utc_now()
@@ -1325,8 +1335,9 @@ class Database:
             connection.execute(
                 """
                 INSERT INTO messages
-                    (id, session_id, role, content, rewritten_query, grounded, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, session_id, role, content, rewritten_query, grounded,
+                     suggested_questions_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message_id,
@@ -1335,6 +1346,7 @@ class Database:
                     content,
                     rewritten_query,
                     None if grounded is None else int(grounded),
+                    json.dumps(suggested_questions or []),
                     now,
                 ),
             )
@@ -1362,6 +1374,7 @@ class Database:
             "rewritten_query": rewritten_query,
             "grounded": grounded,
             "citations": citations or [],
+            "suggested_questions": suggested_questions or [],
             "created_at": now,
         }
 
@@ -1390,6 +1403,9 @@ class Database:
                     (item["id"],),
                 ).fetchall()
                 item["citations"] = [dict(citation) for citation in citation_rows]
+                item["suggested_questions"] = json.loads(
+                    item.pop("suggested_questions_json", None) or "[]"
+                )
                 messages.append(item)
         return messages
 

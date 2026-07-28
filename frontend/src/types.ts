@@ -106,6 +106,7 @@ export interface ChatMessage {
   rewritten_query?: string | null;
   grounded?: boolean | null;
   citations: Citation[];
+  suggested_questions?: string[];
   created_at: string;
 }
 
@@ -124,6 +125,7 @@ export interface AskResult {
   retrieval_status: "grounded" | "not_found";
   rewritten_query?: string | null;
   citations: Citation[];
+  suggested_questions?: string[];
 }
 
 export interface EvaluationDataset {

@@ -495,6 +495,7 @@ class RagServices:
             citations, diagnostics = self.retrieve(rewritten_query)
             self.database.add_message(session_id, "user", question)
 
+            suggested_questions: list[str] = []
             if not citations:
                 answer = NOT_FOUND_ANSWER
             else:
@@ -504,6 +505,13 @@ class RagServices:
                 grounded = answer.strip() != NOT_FOUND_ANSWER
                 if not grounded:
                     citations = []
+                else:
+                    try:
+                        suggested_questions = self.provider.suggest_questions(
+                            question, answer, citations
+                        )
+                    except ProviderUnavailable:
+                        suggested_questions = []
 
             self.database.add_message(
                 session_id,
@@ -514,6 +522,7 @@ class RagServices:
                 ),
                 grounded=grounded,
                 citations=citations,
+                suggested_questions=suggested_questions,
             )
             self.database.touch_session(session_id, self.settings.session_ttl_minutes)
             return {
@@ -527,6 +536,7 @@ class RagServices:
                 ),
                 "citations": citations,
                 "retrieval_diagnostics": diagnostics,
+                "suggested_questions": suggested_questions,
             }
         except ProviderUnavailable as exc:
             error_code = "provider_unavailable"
